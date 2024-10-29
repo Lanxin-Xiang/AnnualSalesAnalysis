@@ -1,0 +1,474 @@
+---
+title: "Annual sales analysis"
+author: "Lanxin Xiang"
+date: "2024-10-22"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS) #<---boxcox
+library(stats)  #<---for cooks.distance
+library(faraway) #<--halfnorm
+library(caret) #<---boxcox lambda
+library(lawstat) # run test
+library(lmtest) # dw test, levene test
+library(nortest) # ad test
+library(onewaytests) #  BF Test
+library(boot)
+```
+
+## Load data
+```{r}
+x <- seq(0,9)
+y <- c(98, 135, 162, 178, 221, 232, 283, 300, 374, 395)
+x_c <- x - mean(x)
+data <- data.frame(x, x_c, y)
+```
+
+## Descriptive Analysis
+
+```{r}
+summary(y)
+par(mfrow = c(1,2))
+boxplot(y, ylab = 'Sales')
+plot(x, y, xlab = 'Year', ylab = 'Sales', )
+```
+## Propose Models
+
+```{r}
+lmfit1 <- lm(y~x)
+lmfit2 <- lm(y~0+x)
+```
+
+```{r}
+bc1 <- boxcox(lmfit1, plotit=T)
+```
+
+```{r}
+lambda1 <- bc1$x[which.max(bc1$y)]
+```
+
+```{r}
+ybc1 <- (y^lambda1-1)/lambda1
+lmbc1 <- lm(ybc1~x)
+```
+
+
+## Diagnostics
+
+### lmfit1
+
+y~b0+b1x+elsilon
+
+```{r}
+summary(lmfit1)
+```
+
+```{r}
+# influential points
+cook1 <- cooks.distance(lmfit1)
+par(mfcol=c(1,2))
+halfnorm(cook1,3,ylab="Cooks dist")
+boxplot(cook1)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(lmfit1),residuals(lmfit1),xlab="Fitted Annual Sales",ylab="Residuals")
+abline(h=0)
+plot(fitted(lmfit1),abs(residuals(lmfit1)),xlab="Fitted Annual Sales",ylab="|Residuals|")
+```
+
+```{r}
+lmfit1$residuals
+```
+
+(+++)(-----)(++)
+num. of run=3
+postive = 5
+negative = 5
+
+rL = 2 rU = 10
+do not reject the null hypothesis
+
+```{r}
+## randomness cont.
+#runs.test(residuals(lmfit1)) # large sample
+dwtest(lmfit1)
+```
+
+```{r}
+## constant variance BF test
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,5), rep(0,5)))
+  temp <- data.frame(res = residuals(lmfit1), group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(x, lmfit1$residuals^2, xlab='Year', ylab='Residuals^2')
+bptest(lmfit1)
+
+res21 <- lmfit1$residuals^2
+bp1 <- lm(res21~x)
+ssr1 <- sum((bp1$fitted.values-mean(res21))^2)
+
+bpt1 <- (ssr1/2)/(sum(res21)/10)^2
+bpt1
+1-pchisq(bpt1, 1)
+```
+
+
+```{r}
+## normality test
+qqnorm(residuals(lmfit1), ylab="Residuals")
+qqline(residuals(lmfit1))
+
+shapiro.test(residuals(lmfit1))
+ad.test(residuals(lmfit1))
+```
+
+### lmfit2
+
+y~b1x+elsilon
+
+```{r}
+# influential points
+cook2 <- cooks.distance(lmfit2)
+par(mfcol=c(1,2))
+halfnorm(cook2,3,ylab="Cooks dist")
+boxplot(cook2)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(lmfit2),residuals(lmfit2),xlab="Fitted Annual Sales",ylab="Residuals")
+abline(h=0)
+plot(fitted(lmfit2),abs(residuals(lmfit2)),xlab="Fitted Annual Sales",ylab="|Residuals|")
+```
+
+```{r}
+lmfit2$residuals
+```
+
+(+++++)(-)(+)(---)
+num. of run=4
+postive = 6
+negative = 4
+
+rL = 2 rU = 9
+do not reject the null hypothesis
+
+```{r}
+## randomness cont.
+#runs.test(residuals(lmfit1)) # large sample
+dwtest(lmfit2)
+```
+Not random!!
+
+```{r}
+## constant variance BF test
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,5), rep(0,5)))
+  temp <- data.frame(res = residuals(lmfit2), group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(x, lmfit2$residuals^2, xlab='Year', ylab='Residuals^2')
+bptest(lmfit2, varformula = ~1+x)
+```
+
+
+```{r}
+res22 <- lmfit2$residuals^2
+bp2 <- lm(res22~x)
+ssr2 <- sum((bp2$fitted.values-mean(res22))^2)
+
+bpt2 <- (ssr2/2)/(sum(res22)/10)^2
+bpt2
+1-pchisq(bpt2, 1)
+```
+reject 
+
+
+```{r}
+## normality test
+qqnorm(residuals(lmfit2), ylab="Residuals")
+qqline(residuals(lmfit2))
+
+shapiro.test(residuals(lmfit2))
+ad.test(residuals(lmfit2))
+```
+
+
+### lmbc1
+
+boxcox(y)~b0+b1x+elsilon
+
+```{r}
+# influential points
+cook4 <- cooks.distance(lmbc1)
+par(mfcol=c(1,2))
+halfnorm(cook4,3,ylab="Cooks dist")
+boxplot(cook4)
+```
+
+
+```{r}
+plot(x, ybc1, xlab='Year', ylab='BoxCox(Anuual Sales)')
+```
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(lmbc1),residuals(lmbc1),xlab="Fitted Annual Sales",ylab="Residuals")
+abline(h=0)
+plot(fitted(lmbc1),abs(residuals(lmbc1)),xlab="Fitted Annual Sales",ylab="|Residuals|")
+```
+
+```{r}
+lmbc1$residuals
+```
+
+(-)(++)(-)(+)(-)(+)(-)(+)(-)
+
+num. of run=9
+postive = 5
+negative = 5
+
+rL = 2 rU = 10
+do not reject the null hypothesis
+
+```{r}
+## randomness cont.
+#runs.test(residuals(lmfit1)) # large sample
+dwtest(lmbc1)
+```
+
+```{r}
+## constant variance BF test
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- residuals(lmbc1)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,5), rep(0,5)))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(x, lmbc1$residuals^2,  xlab='Year', ylab='Residuals^2')
+bptest(lmbc1)
+```
+
+```{r}
+res24 <- lmbc1$residuals^2
+bp4 <- lm(res24~x)
+ssr4 <- sum((bp4$fitted.values-mean(res24))^2)
+
+bpt4 <- (ssr4/2)/(sum(res24)/10)^2
+bpt4
+1-pchisq(bpt4, 1)
+```
+
+
+```{r}
+## normality test
+qqnorm(residuals(lmbc1), ylab="Residuals")
+qqline(residuals(lmbc1))
+
+shapiro.test(residuals(lmbc1))
+ad.test(residuals(lmbc1))
+```
+
+### wls1
+
+```{r}
+res1<-residuals(lmfit1)
+absres1<-abs(res1)
+
+lmfitw1 <- lm(absres1~x)
+summary(lmfitw1)
+#weight is proportion to inverse of variance
+w1 <- 1/(fitted(lmfitw1))^2
+wlm1 <-lm(y ~ x, weights=w1)
+summary(wlm1)
+```
+
+```{r}
+# influential points
+cookw1 <- cooks.distance(wlm1)
+par(mfcol=c(1,2))
+halfnorm(cookw1,3,ylab="Cooks dist")
+boxplot(cookw1)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+w.normed <- w1/sum(w1)
+weighted_res <- sqrt(w.normed)*residuals(wlm1)
+plot(fitted(wlm1),weighted_res,xlab="Fitted Annual Sales",ylab="Weighted Residuals")
+abline(h=0)
+plot(fitted(wlm1),abs(weighted_res),xlab="Fitted Annual Sales",ylab="|Weighted Residuals|")
+```
+
+```{r}
+weighted_res
+```
+
+(+++)(-----)(++)
+num. of run=3
+postive = 5
+negative = 5
+
+rL = 2 rU = 10
+do not reject the null hypothesis
+
+```{r}
+## randomness cont.
+#runs.test(residuals(lmfit1)) # large sample
+dwtest(wlm1)
+```
+
+```{r}
+## constant variance BF test
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- weighted_res
+for (i in 1:rounds){
+  group <- sample(c(rep(1,5), rep(0,5)))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(x, weighted_res^2, xlab='Year', ylab='(Weighted Residuals)^2')
+bptest(wlm1)
+```
+
+```{r}
+resw21 <- weighted_res^2
+bpw1 <- lm(resw21~x, weights = w1)
+ssrw1 <- sum((bpw1$fitted.values-mean(resw21))^2)
+
+bptw1 <- (ssrw1/2)/(sum(resw21)/10)^2
+
+bptw1
+1-pchisq(bptw1, 1)
+```
+
+
+```{r}
+## normality test
+qqnorm(weighted_res, ylab="Weighted Residuals")
+qqline(weighted_res)
+
+shapiro.test(weighted_res)
+ad.test(weighted_res)
+```
+
+
+### Model selection
+```{r}
+loocv_lm <- function(data, expression = expr(y~x), K = 10) {
+  errors <- numeric(K)
+  folds <- seq(1:K)
+  for (k in 1:K) {
+    train_data <- data[folds != k, ]
+    test_data <- data[folds == k, ]
+    
+    fit <- lm(expression, data = train_data)
+    predictions <- predict(fit, newdata = test_data)
+    errors[k] <- (test_data$y - predictions)^2
+  }
+  return(errors)
+}
+
+loocv_lmbc <- function(data, y.og, lambda, expression = expr(y~x), K = 10) {
+  errors <- numeric(K)
+  folds <- seq(1:K)
+  for (k in 1:K) {
+    train_data <- data[folds != k, ]
+    test_data <- data[folds == k, ]
+    
+    fit <- lm(expression, data = train_data)
+    predictions <- predict(fit, newdata = test_data)
+    e.yhat <- (lambda*predictions + 1)^(1/lambda)
+    errors[k] <- (y.og[k] - e.yhat)^2
+  }
+  return(errors)
+}
+
+weighted_loocv_glm <- function(data, expression = expr(y~x), K = 10) {
+  errors <- numeric(K)
+  folds <- seq(1:K)
+  for (k in 1:K) {
+    train_data <- data[folds != k, ]
+    test_data <- data[folds == k, ]
+    fit <- lm(expression, data = train_data, weights = train_data$w)
+    predictions <- predict(fit, newdata = test_data)
+    errors[k] <- (test_data$y - predictions)^2*test_data$w
+  }
+  
+  return(errors)
+}
+```
+
+
+```{r}
+cv1 <- loocv_lm(data=data.frame(x=x, y=y), expression = expr(y~x), K = 10)
+
+cvbc1 <- loocv_lmbc(data=data.frame(x=x, y=ybc1), y.og=y,lambda = lambda1, expression = expr(y~x), K = 10)
+
+gwlm1 <- weighted_loocv_glm(data=data.frame(x=x, y=y, w=w.normed), expression = expr(y~x), K = 10)
+
+boxplot((data.frame("SLR" = cv1, "SLR w Box-Cox"=cvbc1, "SLR w WLS"=gwlm1*10)))
+```
+
+### Inference
+```{r}
+summary(lmfit1)
+confint(lmfit1)
+```
+
+```{r}
+predict(lmfit1, newdata = data.frame(x=10))
+predict(lmfit1, newdata = data.frame(x=10), interval='confidence')
+predict(lmfit1, newdata = data.frame(x=10), interval='prediction')
+```
