@@ -1,0 +1,910 @@
+---
+title: "Annual sales analysis"
+author: "Lanxin Xiang"
+date: "2024-11-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS) #<---boxcox
+library(stats)  #<---for cooks.distance
+library(faraway) #<--halfnorm
+library(caret) #<---boxcox lambda
+library(lawstat) # run test
+library(lmtest) # dw test, levene test
+library(nortest) # ad test
+library(onewaytests) #  BF Test
+library(boot)
+```
+
+## Load data
+```{r}
+data <- read.table("24tpdataFall24_n189.txt", header = TRUE)
+n <- length(data$Biomarker)
+str(data)
+```
+
+## Descriptive Analysis
+
+```{r}
+summary(data$Biomarker)
+par(mfrow = c(1,2))
+boxplot(data$Biomarker, ylab = 'Biomarker')
+plot(data$GeneExpression, data$Biomarker, xlab = 'Gene Expression', ylab = 'Biomarker' )
+```
+## Propose Models and Diagnostics
+
+### lmfit
+
+y~b0+b1x+elsilon
+
+```{r}
+lmfit <- lm(Biomarker~GeneExpression, data = data)
+summary(lmfit)
+```
+
+```{r}
+# influential points
+lm.cooks <- cooks.distance(lmfit)
+par(mfcol=c(1,2))
+halfnorm(lm.cooks,3,ylab="Cooks dist")
+boxplot(lm.cooks)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(lmfit),residuals(lmfit),xlab="Fitted Biomarker",ylab="Residuals")
+abline(h=0)
+plot(fitted(lmfit),abs(residuals(lmfit)),xlab="Fitted Biomarker",ylab="|Residuals|")
+```
+
+```{r}
+## randomness cont.
+runs.test(residuals(lmfit)) # large sample
+# dwtest(lmfit_cl) no time dependence
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- residuals(lmfit)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(data$GeneExpression, lmfit$residuals^2, xlab='Gene Expression', ylab='Residuals^2')
+bptest(lmfit)
+
+res2_lm <- lmfit$residuals^2
+bp_lm <- lm(res2_lm~data$GeneExpression)
+ssr_lm <- sum((bp_lm$fitted.values-mean(res2_lm))^2)
+
+bpt_lm <- (ssr_lm/2)/(sum(res2_lm)/n)^2
+bpt_lm
+1-pchisq(bpt_lm, 1)
+```
+reject BP test !!
+
+```{r}
+## normality test
+qqnorm(residuals(lmfit), ylab="Residuals")
+qqline(residuals(lmfit))
+
+shapiro.test(residuals(lmfit))
+ks.test(residuals(lmfit), "pnorm", mean = mean(residuals(lmfit)), sd = sd(residuals(lmfit)))
+```
+### lmbc
+
+boxcox(y)~b0+b1x+elsilon
+
+y >0 no need to shift
+```{r}
+min(data$Biomarker)
+```
+
+```{r}
+bc <- boxcox(lmfit, plotit=T)
+```
+
+```{r}
+lambda <- bc$x[which.max(bc$y)]
+lambda
+```
+
+```{r}
+marker.bc <- (data$Biomarker^lambda-1)/lambda
+plot(data$GeneExpression, marker.bc, xlab = 'Gene Expression', ylab = 'BoxCox(Biomarker)')
+```
+```{r}
+lmbc <- lm(marker.bc~data$GeneExpression)
+summary(lmbc)
+```
+
+```{r}
+# influential points
+bc.cooks <- cooks.distance(lmbc)
+par(mfcol=c(1,2))
+halfnorm(bc.cooks,3,ylab="Cooks dist")
+boxplot(bc.cooks)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(lmbc),residuals(lmbc),xlab="Fitted Biomarker",ylab="Residuals")
+abline(h=0)
+plot(fitted(lmbc),abs(residuals(lmbc)),xlab="Fitted Biomarker",ylab="|Residuals|")
+```
+
+
+```{r}
+## randomness cont.
+runs.test(residuals(lmbc)) # large sample
+# dwtest(lmbc)
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- residuals(lmbc)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+```{r}
+plot(data$Biomarker, lmbc$residuals^2,  xlab='Gene Expression', ylab='Residuals^2')
+bptest(lmbc)
+```
+
+
+```{r}
+res2_bc <- lmbc$residuals^2
+bp_bc <- lm(res2_bc~data$GeneExpression + I(data$GeneExpression^2))
+ssr_bc <- sum((bp_bc$fitted.values-mean(res2_bc))^2)
+
+bpt_bc <- (ssr_bc/2)/(sum(res2_bc)/n)^2
+bpt_bc
+1-pchisq(bpt_bc, 2)
+```
+
+reject
+
+```{r}
+## normality test
+qqnorm(residuals(lmbc), ylab="Residuals")
+qqline(residuals(lmbc))
+
+shapiro.test(residuals(lmbc))
+ks.test(residuals(lmbc), "pnorm", mean = mean(residuals(lmbc)), sd = sd(residuals(lmbc)))
+ad.test(residuals(lmbc))
+```
+
+### wls
+
+```{r}
+lmres <- residuals(lmfit)
+abslmres<-abs(lmres)
+plot(data$GeneExpression, abslmres, xlab='Gene Expression', ylab='|Residuals|')
+```
+
+```{r}
+lmw <- lm(abslmres~data$GeneExpression + I(data$GeneExpression^2))
+summary(lmw)
+```
+
+```{r}
+#weight is proportion to inverse of variance
+w <- 1/(fitted(lmw))^2
+wlm <- lm(Biomarker~GeneExpression, data = data, weights = w)
+summary(wlm)
+```
+
+```{r}
+# influential points
+cookw <- cooks.distance(wlm)
+par(mfcol=c(1,2))
+halfnorm(cookw,3,ylab="Cooks dist")
+boxplot(cookw)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+w.normed <- w/sum(w)
+weighted_res <- sqrt(w.normed)*residuals(wlm)
+plot(fitted(wlm),weighted_res,xlab="Fitted Biomarker",ylab="Weighted Residuals")
+abline(h=0)
+plot(fitted(wlm),abs(weighted_res),xlab="Fitted Biomarker",ylab="|Weighted Residuals|")
+```
+
+
+```{r}
+## randomness cont.
+runs.test(weighted_res) # large sample
+# dwtest(wlm)
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- weighted_res
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(data$GeneExpression, weighted_res^2, xlab='Gene Expression', ylab='(Weighted Residuals)^2')
+bptest(wlm)
+```
+
+```{r}
+res2_wlm <- weighted_res^2
+bp_wlm <- lm(res2_wlm~data$GeneExpression)
+ssr_wlm <- sum((bp_wlm$fitted.values-mean(res2_wlm))^2)
+
+bpt_wlm <- (ssr_wlm/2)/(sum(res2_wlm)/n)^2
+bpt_wlm
+1-pchisq(bpt_wlm, 1)
+```
+
+reject
+
+```{r}
+## normality test
+qqnorm(weighted_res, ylab="Weighted Residuals")
+qqline(weighted_res)
+
+shapiro.test(weighted_res)
+ad.test(weighted_res)
+```
+not normal but we can use bootstrapping to estimate
+
+### 1/y link
+
+1/y~b0+b1x+elsilon
+
+```{r}
+bio.new <- 1/data$Biomarker
+plot(data$GeneExpression, bio.new, xlab = 'Gene Expression', ylab = '1/Biomarker' )
+```
+
+```{r}
+linklm <- lm(bio.new~data$GeneExpression)
+summary(linklm)
+```
+
+```{r}
+# influential points
+linklm.cooks <- cooks.distance(linklm)
+par(mfcol=c(1,2))
+halfnorm(linklm.cooks,3,ylab="Cooks dist")
+boxplot(linklm.cooks)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(linklm),residuals(linklm),xlab="Fitted Biomarker",ylab="Residuals")
+abline(h=0)
+plot(fitted(linklm),abs(residuals(linklm)),xlab="Fitted Biomarker",ylab="|Residuals|")
+```
+
+```{r}
+## randomness cont.
+runs.test(residuals(linklm)) # large sample
+# dwtest(lmfit_cl) no time dependence
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- residuals(linklm)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(data$GeneExpression, linklm$residuals^2, xlab='Gene Expression', ylab='Residuals^2')
+bptest(linklm)
+
+res2_linklm <- linklm$residuals^2
+bp_linklm <- lm(res2_linklm~data$GeneExpression)
+ssr_linklm <- sum((bp_linklm$fitted.values-mean(res2_linklm))^2)
+
+bpt_linklm <- (ssr_linklm/2)/(sum(res2_linklm)/n)^2
+bpt_linklm
+1-pchisq(bpt_linklm, 1)
+```
+not reject BP test !!
+
+```{r}
+## normality test
+qqnorm(residuals(linklm), ylab="Residuals")
+qqline(residuals(linklm))
+
+shapiro.test(residuals(linklm))
+ks.test(residuals(linklm), "pnorm", mean = mean(residuals(linklm)), sd = sd(residuals(linklm)))
+```
+
+### Quadratic 
+
+y = b0+b1x+b2x^2
+
+```{r}
+qlm <- lm(Biomarker~GeneExpression + I(GeneExpression^2), data = data)
+summary(qlm)
+```
+
+```{r}
+test_x <- data$GeneExpression+2000
+qlm_test <- lm(data$Biomarker~test_x + I(test_x^2))
+summary(qlm_test)
+```
+```{r}
+# influential points
+qlm.cooks <- cooks.distance(qlm)
+par(mfcol=c(1,2))
+halfnorm(qlm.cooks,3,ylab="Cooks dist")
+boxplot(qlm.cooks)
+```
+
+
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(qlm),residuals(qlm),xlab="Fitted Biomarker",ylab="Residuals")
+abline(h=0)
+plot(fitted(qlm),abs(residuals(qlm)),xlab="Fitted Biomarker",ylab="|Residuals|")
+```
+
+```{r}
+## randomness cont.
+runs.test(residuals(qlm)) # large sample
+# dwtest(lmfit_cl) no time dependence
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- residuals(qlm)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(data$GeneExpression, qlm$residuals^2, xlab='Gene Expression', ylab='Residuals^2')
+bptest(qlm)
+
+res2_qlm <- qlm$residuals^2
+bp_qlm <- lm(res2_qlm~data$GeneExpression)
+ssr_qlm <- sum((bp_qlm$fitted.values-mean(res2_qlm))^2)
+
+bpt_qlm <- (ssr_qlm/2)/(sum(res2_qlm)/n)^2
+bpt_qlm
+1-pchisq(bpt_qlm, 2)
+```
+reject BP test ?
+
+```{r}
+## normality test
+qqnorm(residuals(qlm), ylab="Residuals")
+qqline(residuals(qlm))
+
+shapiro.test(residuals(qlm))
+ks.test(residuals(qlm), "pnorm", mean = mean(residuals(qlm)), sd = sd(residuals(qlm)))
+```
+### qlmbc
+
+boxcox(y)~b0+b1x+b2x^2+elsilon
+
+y > 0 no need to shift
+```{r}
+min(data$Biomarker)
+```
+
+```{r}
+bc2 <- boxcox(qlm, plotit=T)
+```
+
+```{r}
+lambda2 <- bc2$x[which.max(bc2$y)]
+lambda2
+```
+
+
+```{r}
+marker.bc2 <- (data$Biomarker^lambda2-1)/lambda2
+plot(data$GeneExpression, marker.bc2, xlab = 'Gene Expression', ylab = 'BoxCox(Biomarker)')
+```
+```{r}
+qlmbc <- lm(marker.bc2~data$GeneExpression + I(data$GeneExpression^2))
+summary(qlmbc)
+
+testqlm <- lm(marker.bc2~test_x + I(test_x^2))
+summary(testqlm)
+```
+
+```{r}
+# influential points
+qcook_bc <- cooks.distance(qlmbc)
+par(mfcol=c(1,2))
+halfnorm(qcook_bc,3,ylab="Cooks dist")
+boxplot(qcook_bc)
+```
+
+
+```{r}
+## randomness
+par(mfcol=c(1,2))
+plot(fitted(qlmbc),residuals(qlmbc),xlab="Fitted Biomarker",ylab="Residuals")
+abline(h=0)
+plot(fitted(qlmbc),abs(residuals(qlmbc)),xlab="Fitted Biomarker",ylab="|Residuals|")
+```
+
+
+```{r}
+## randomness cont.
+runs.test(residuals(qlmbc)) # large sample
+# dwtest(lmbc)
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- residuals(qlmbc)
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+```{r}
+plot(data$Biomarker, qlmbc$residuals^2,  xlab='Gene Expression', ylab='Residuals^2')
+bptest(qlmbc)
+```
+
+
+```{r}
+res2_qbc <- qlmbc$residuals^2
+bp_qbc <- lm(res2_qbc~data$GeneExpression + I(data$GeneExpression^2))
+ssr_qbc <- sum((bp_qbc$fitted.values-mean(res2_qbc))^2)
+
+bpt_qbc <- (ssr_qbc/2)/(sum(res2_qbc)/n)^2
+bpt_qbc
+1-pchisq(bpt_qbc, 2)
+```
+
+reject
+
+```{r}
+## normality test
+qqnorm(residuals(qlmbc), ylab="Residuals")
+qqline(residuals(qlmbc))
+
+shapiro.test(residuals(qlmbc))
+ad.test(residuals(qlmbc))
+```
+
+### qwls
+
+```{r}
+qlmres <- residuals(qlm)
+absqlmres <-abs(qlmres)
+plot(data$GeneExpression, absqlmres, xlab='Gene Expression', ylab='|Residuals|')
+```
+
+```{r}
+qlmw <- lm(absqlmres~data$GeneExpression + I(data$GeneExpression^2))
+summary(qlmw)
+```
+
+```{r}
+#weight is proportion to inverse of variance
+qw <- 1/(fitted(qlmw))^2
+qwlm <- lm(Biomarker~GeneExpression + I(GeneExpression^2), data = data, weights = qw)
+summary(qwlm)
+```
+
+```{r}
+# influential points
+qcookw <- cooks.distance(qwlm)
+par(mfcol=c(1,2))
+halfnorm(qcookw,3,ylab="Cooks dist")
+boxplot(qcookw)
+```
+```{r}
+## randomness
+par(mfcol=c(1,2))
+qw.normed <- qw/sum(qw)
+qweighted_res <- sqrt(qw.normed)*residuals(qwlm)
+plot(fitted(qwlm),qweighted_res,xlab="Fitted Biomarker",ylab="Weighted Residuals")
+abline(h=0)
+plot(fitted(qwlm),abs(qweighted_res),xlab="Fitted Biomarker",ylab="|Weighted Residuals|")
+```
+
+```{r}
+## randomness cont.
+runs.test(qweighted_res) # large sample
+# dwtest(qwlm)
+```
+
+```{r}
+## constant variance BF test
+
+set.seed(42)
+rounds <- 10000
+bf_p <- rep(NA, rounds)
+res <- qweighted_res
+for (i in 1:rounds){
+  group <- sample(c(rep(1,n %/% 2), rep(0,n-(n %/% 2))))
+  temp <- data.frame(res = res, group = group)
+  bf <- bf.test(res~factor(group), data = temp, verbose = FALSE)
+  bf_p[i] <- bf$p.value
+}
+sum(bf_p>0.05)/rounds
+```
+
+do not reject the null hypothesis BF test
+
+```{r}
+plot(data$GeneExpression, qweighted_res^2, xlab='Gene Expression', ylab='(Weighted Residuals)^2')
+bptest(qwlm)
+```
+
+```{r}
+res2_qwlm <- qweighted_res^2
+bp_qwlm <- lm(res2_qwlm~data$GeneExpression)
+ssr_qwlm <- sum((bp_qwlm$fitted.values-mean(res2_qwlm))^2)
+
+bpt_qwlm <- (ssr_qwlm/2)/(sum(res2_qwlm)/n)^2
+bpt_qwlm
+1-pchisq(bpt_qwlm, 2)
+```
+
+not reject
+
+```{r}
+## normality test
+qqnorm(qweighted_res, ylab="Weighted Residuals")
+qqline(qweighted_res)
+
+shapiro.test(qweighted_res)
+ks.test(qweighted_res, "pnorm", mean = mean(qweighted_res), sd = sd(qweighted_res))
+
+```
+not normal but we can use bootstrapping to estimate
+
+
+## Model selection
+
+
+```{r}
+expression <- expr(Biomarker~GeneExpression + I(GeneExpression^2))
+```
+
+
+```{r}
+getPredictionError <- function(train, test, expression){
+  fit <- lm(expression, data = train)
+  predictions <- predict(fit, newdata = test)
+  errors <- (test$Biomarker - predictions)^2
+  MSE <- mean(errors)
+  return (list(errors, MSE))
+}
+
+getWeightedPredictionError <- function(train, test, expression){
+  lmfit <- lm(expression, data=train)
+  absres <- abs(residuals(lmfit) - train$Biomarker)
+  wfit <- lm(absres~train$GeneExpression+I(train$GeneExpression^2))
+  train_w <- 1/(fitted(wfit))^2
+  train$w <- train_w/sum(train_w)
+  
+  fit <- lm(expression, data = train, weights = train$w)
+  
+  test_w <- rep(NA, length(test$Biomarker))
+  for (i in 1: length(test$Biomarker)){
+    test_w[i] <- 1/(wfit$coefficients[1]+wfit$coefficients[2]*test$Biomarker[i]+wfit$coefficients[3]*test$Biomarker[i]^2)^2
+  }
+  
+  test$w <- test_w/sum(test_w)
+  predictions <- predict(fit, newdata = test)
+  errors <- (test$Biomarker - predictions)^2
+  MSE <- sum(errors*test$w)
+  return (list(errors, MSE))
+}
+
+getPredictionErrorLink <- function(train, test){
+  y.new <- 1/train$Biomarker
+  train.new <- data.frame(y=y.new, GeneExpression=train$GeneExpression)
+  fit <- lm(y~GeneExpression, data=train.new)
+  predictions <- predict(fit, newdata = test)
+  errors <- (test$Biomarker - 1/predictions)^2
+  MSE <- mean(errors)
+  return (list(errors, MSE))
+}
+```
+
+
+
+```{r}
+set.seed(42)
+
+train_idx <- sample(1:n, floor(n*0.7))
+test_idx <- setdiff(c(1:n), train_idx)
+train <- data[train_idx, ]
+test <- data[test_idx, ]
+```
+
+```{r}
+ls_error <- getPredictionError(train, test, expr(Biomarker~GeneExpression))
+
+wls_error <- getWeightedPredictionError(train, test, expr(Biomarker~GeneExpression))
+qlm_error <- getPredictionError(train, test, expr(Biomarker~GeneExpression + I(GeneExpression^2)))
+qwls_error <- getWeightedPredictionError(train, test, expr(Biomarker~GeneExpression + I(GeneExpression^2)))
+
+linkls_error <- getPredictionErrorLink(train, test)
+```
+
+```{r}
+tn <- length(test$Biomarker)
+error.df <- data.frame("SLR"=ls_error[[1]],"SLR w WLS" = wls_error[[1]], "QLR"=qlm_error[[1]], "QLR w WLS"=qwls_error[[1]], "SLR w Link" = linkls_error[[1]])
+boxplot(error.df)
+```
+
+```{r}
+ls_error[[2]]
+wls_error[[2]]
+qlm_error[[2]]
+qwls_error[[2]]
+linkls_error[[2]]
+```
+
+
+
+## Inference
+
+```{r}
+summary(qwlm)
+summary(qlm)
+```
+### define functions
+
+```{r}
+findGeneExpression <- function(coef0, coef1, coef2, y){
+  discriminant <- coef1^2 - 4 * coef2 * (coef0 - y)
+  
+  if (discriminant < 0) {
+    return("No real solutions for x")
+  } 
+  else {
+    x1 <- (-coef1 + sqrt(discriminant)) / (2 * coef2)
+    # x2 <- (-coef1 - sqrt(discriminant)) / (2 * coef2)
+  }
+  return (x1)
+}
+```
+
+```{r}
+inference1 <- function (data, expression, newx, newy){
+  lmfit <- lm(expression, data=data)
+  absres <- abs(residuals(lmfit) - data$Biomarker)
+  wfit <- lm(absres~data$GeneExpression+I(data$GeneExpression^2))
+  w <- 1/(fitted(wfit))^2
+  data$w <- w
+  
+  fit <- lm(expression, data = data, weights = data$w)
+  b1 <- fit$coefficients[2]
+  b2 <- fit$coefficients[3]
+  sigma <- summary(fit)$sigma
+    
+  pred_w <- 1/(wfit$coefficients[1]+wfit$coefficients[2]*newx+wfit$coefficients[3]*newx^2)^2
+  pred_df <- data.frame(GeneExpression=newx, w=pred_w) 
+  pred_new_mean <- predict(fit, pred_df)
+  
+  pred_new_y <- pred_new_mean + rnorm(1, 0, 1/sqrt(pred_w)*sigma)
+  
+  ge <- findGeneExpression(wfit$coefficients[1], wfit$coefficients[2], wfit$coefficients[3], newy)
+  
+  return(list(b1, b2, pred_new_mean, pred_new_y, ge))
+}
+```
+
+```{r}
+inference2 <- function (data, expression, newx, newy){
+  lmfit <- lm(expression, data=data)
+  b1 <- lmfit$coefficients[2]
+  b2 <- lmfit$coefficients[3]
+  sigma <- summary(lmfit)$sigma
+    
+  pred_new_mean <- predict(lmfit, list(GeneExpression=newx))
+  pred_new_y <- pred_new_mean + rnorm(1, 0, sigma)
+  
+  ge <- findGeneExpression(lmfit$coefficients[1], lmfit$coefficients[2], lmfit$coefficients[3], newy)
+  
+  return(list(b1, b2, pred_new_mean, pred_new_y, ge))
+}
+```
+
+```{r}
+# bootstrapping for inference
+bootstrapping <- function(data, n, B, expression, newx, newy, func){
+  res <- data.frame(b1 = rep(NA, B), b2 = rep(NA, B), pred_mean = rep(NA, B), pred_val = rep(NA, B), findge=rep(NA, B))
+  i <- 1
+  while (i <= B) {
+    index <- sample(seq(1, n), n, replace = TRUE)
+    temp_data <- data[index, ]
+    inference_res <- func(temp_data, expression, newx, newy)
+    res[i, 'b1'] <- inference_res[[1]]
+    res[i, 'b2'] <- inference_res[[2]]
+    res[i, 'pred_mean'] <- inference_res[[3]]
+    res[i, 'pred_val'] <- inference_res[[4]]
+    res[i, 'findge'] <- inference_res[[5]]
+    i <- i+1
+    }
+  return (res)
+}
+```
+
+
+### find CI, PI
+
+```{r}
+set.seed(42)
+res <- bootstrapping(data=data, n=n, B=10000, expression=expr(Biomarker~GeneExpression + I(GeneExpression^2)), newx=100, newy = 10, func=inference1)
+```
+
+```{r}
+quantile(res$b1, probs = c(0.025, 0.975))
+quantile(res$b2, probs = c(0.025, 0.975))
+quantile(res$pred_mean, probs = c(0.025, 0.975))
+quantile(res$pred_val, probs = c(0.025, 0.975))
+quantile(res$findge, probs = c(0.025, 0.975))
+```
+
+```{r}
+pred_y1 <- predict(qwlm, newdata = list(GeneExpression=100))
+pred_x1 <- findGeneExpression(qwlm$coefficients[1], qwlm$coefficients[2], qwlm$coefficients[3], 10)
+pred_y1
+pred_x1
+```
+
+```{r}
+hist(res$b1, xlab='b1', main='Bootstrapping distribution for QLR w WLS b1')
+abline(v= quantile(res$b1, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= qwlm$coefficients[2], col='red')
+```
+
+```{r}
+hist(res$b2, xlab='b2', main='Bootstrapping distribution for QLR w WLS b2')
+abline(v= quantile(res$b2, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= qwlm$coefficients[3], col='red')
+```
+```{r}
+hist(res$pred_mean, xlab='E(B|GE=100)', main='Bootstrapping distribution for E(B|GE=100) estimated by QLR w WLS')
+abline(v= quantile(res$pred_mean, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= pred_y1, col='red')
+```
+
+```{r}
+hist(res$pred_val, xlab='B|GE=100', main='Bootstrapping distribution for B|GE=100 estimated by QLR w WLS')
+abline(v= quantile(res$pred_val, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= pred_y1, col='red')
+```
+```{r}
+hist(res$findge, xlab='E(GE|B=10)', main='Bootstrapping distribution for E(GE|B=10) estimated by QLR w WLS')
+abline(v= quantile(res$findge, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= pred_x1, col='red')
+```
+
+```{r}
+set.seed(42)
+res2 <- bootstrapping(data=data, n=n, B=10000, expression=expr(Biomarker~GeneExpression + I(GeneExpression^2)), newx=100, newy = 10, func=inference2)
+```
+
+```{r}
+quantile(res2$b1, probs = c(0.025, 0.975))
+quantile(res2$b2, probs = c(0.025, 0.975))
+quantile(res2$pred_mean, probs = c(0.025, 0.975))
+quantile(res2$pred_val, probs = c(0.025, 0.975))
+quantile(res2$findge, probs = c(0.025, 0.975))
+```
+
+```{r}
+pred_y2 <- predict(qlm, newdata = list(GeneExpression=100))
+pred_x2 <- findGeneExpression(qlm$coefficients[1], qlm$coefficients[2], qlm$coefficients[3], 10)
+pred_y2
+pred_x2
+```
+
+```{r}
+hist(res2$b1, xlab='b1', main='Bootstrapping distribution for QLR b1')
+abline(v= quantile(res2$b1, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= qlm$coefficients[2], col='red')
+```
+
+```{r}
+hist(res2$b2, xlab='b2', main='Bootstrapping distribution for QLR b2')
+abline(v= quantile(res2$b2, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= qlm$coefficients[3], col='red')
+```
+
+```{r}
+hist(res2$pred_mean, xlab='E(B|GE=100)', main='Bootstrapping distribution for E(B|GE=100) estimated by QLR')
+abline(v= quantile(res2$pred_mean, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= pred_y2, col='red')
+```
+
+```{r}
+hist(res2$pred_val, xlab='B|GE=100', main='Bootstrapping distribution for B|GE=100 estimated by QLR')
+abline(v= quantile(res2$pred_val, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= pred_y2, col='red')
+```
+
+```{r}
+hist(res2$findge, xlab='E(GE|B=10)', main='Bootstrapping distribution for E(GE|B=10) estimated by QLR')
+abline(v= quantile(res2$findge, probs = c(0.025, 0.975)), col='blue', lty = 2)
+abline(v= pred_x2, col='red')
+```
